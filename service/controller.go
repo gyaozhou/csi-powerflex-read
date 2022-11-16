@@ -163,6 +163,27 @@ type ZoneContent struct {
 	pool             PoolName
 }
 
+// zhou: implements interface "csi.ControllerServer", including:
+/*
+// ControllerServer is the server API for Controller service.
+type ControllerServer interface {
+	CreateVolume(context.Context, *CreateVolumeRequest) (*CreateVolumeResponse, error)
+	DeleteVolume(context.Context, *DeleteVolumeRequest) (*DeleteVolumeResponse, error)
+	ControllerPublishVolume(context.Context, *ControllerPublishVolumeRequest) (*ControllerPublishVolumeResponse, error)
+	ControllerUnpublishVolume(context.Context, *ControllerUnpublishVolumeRequest) (*ControllerUnpublishVolumeResponse, error)
+	ValidateVolumeCapabilities(context.Context, *ValidateVolumeCapabilitiesRequest) (*ValidateVolumeCapabilitiesResponse, error)
+	ListVolumes(context.Context, *ListVolumesRequest) (*ListVolumesResponse, error)
+	GetCapacity(context.Context, *GetCapacityRequest) (*GetCapacityResponse, error)
+	ControllerGetCapabilities(context.Context, *ControllerGetCapabilitiesRequest) (*ControllerGetCapabilitiesResponse, error)
+	CreateSnapshot(context.Context, *CreateSnapshotRequest) (*CreateSnapshotResponse, error)
+	DeleteSnapshot(context.Context, *DeleteSnapshotRequest) (*DeleteSnapshotResponse, error)
+	ListSnapshots(context.Context, *ListSnapshotsRequest) (*ListSnapshotsResponse, error)
+	ControllerExpandVolume(context.Context, *ControllerExpandVolumeRequest) (*ControllerExpandVolumeResponse, error)
+	ControllerGetVolume(context.Context, *ControllerGetVolumeRequest) (*ControllerGetVolumeResponse, error)
+}
+*/
+
+// zhou: create volume from PowerFlex
 func (s *service) CreateVolume(
 	ctx context.Context,
 	req *csi.CreateVolumeRequest) (
@@ -180,6 +201,8 @@ func (s *service) CreateVolume(
 	}
 
 	if len(zoneTargetMap) == 0 {
+		// zhou: get array system id from StorageClass
+
 		sid, err := s.getSystemIDFromParameters(params)
 		if err != nil {
 			return nil, err
@@ -207,6 +230,8 @@ func (s *service) CreateVolume(
 			isNFS = true
 		}
 	}
+
+	// zhou: get the volume topology from CreateVolume request which specified in StorageClass.
 
 	// validate AccessibleTopology
 	accessibility := req.GetAccessibilityRequirements()
@@ -295,8 +320,19 @@ func (s *service) CreateVolume(
 		// We need to get name of system, in case sc was set up to use name
 		sName := system.System.Name
 
+		// zhou: allowed topolog parameters map
+		/*
+		   allowedTopologies:
+		   - matchLabelExpressions:
+		     - key: csi-vxflexos.dellemc.com/<SYSTEM_ID> # Insert System ID
+		       values:
+		       - csi-vxflexos.dellemc.com
+
+		*/
+
 		segments := accessibility.GetPreferred()[0].GetSegments()
 		for key := range segments {
+			// zhou: name = "csi-vxflexos.dellemc.com"
 			if strings.HasPrefix(key, Name) {
 				tokens := strings.Split(key, "/")
 				constraint := ""
@@ -318,6 +354,9 @@ func (s *service) CreateVolume(
 						}
 					}
 				}
+
+				// zhou: legal system id
+
 				if constraint == sID || constraint == sName {
 					if constraint == sID {
 						requestedSystem = sID
@@ -338,6 +377,7 @@ func (s *service) CreateVolume(
 			return nil, status.Errorf(codes.InvalidArgument,
 				"Requested System %s is not accessible based on Preferred[0] accessibility data, sent by provisioner", systemID)
 		}
+
 		if len(systemSegments) > 0 {
 			// add topology element containing segments matching required system to volume topology
 			volumeTopology = append(volumeTopology, &csi.Topology{
@@ -358,7 +398,11 @@ func (s *service) CreateVolume(
 		}
 	}
 
+	// zhou: the volume name is specified by extnernal provisining sidecar, should match PowerFlex
+	//       requirement.
+
 	// fetch volume name
+
 	name := req.GetName()
 	if name == "" {
 		return nil, status.Error(codes.InvalidArgument,
@@ -824,12 +868,16 @@ func copyInterestingParameters(parameters, out map[string]string) {
 	}
 }
 
+// zhou: the parameters come from StorageClass and PVC
+
 // getSystemIDFromParameters gets the systemID from the given params, if not found get the default
 // array
 func (s *service) getSystemIDFromParameters(params map[string]string) (string, error) {
 	if params == nil {
 		return "", status.Errorf(codes.FailedPrecondition, "params map is nil")
 	}
+
+	// zhou: KeySystemID = "systemID"
 
 	systemID := ""
 	for key, value := range params {
@@ -838,6 +886,8 @@ func (s *service) getSystemIDFromParameters(params map[string]string) (string, e
 			break
 		}
 	}
+
+	// zhou: if system id is not specified in StorageClass, use the default array.
 
 	// systemID not found in storage class params, use the default array
 	if systemID == "" {
@@ -1045,6 +1095,8 @@ func (s *service) createVolumeFromSnapshot(req *csi.CreateVolumeRequest,
 	return &csi.CreateVolumeResponse{Volume: csiVolume}, nil
 }
 
+// zhou: why need cache ???
+
 func (s *service) clearCache() {
 	s.volCacheRWL.Lock()
 	defer s.volCacheRWL.Unlock()
@@ -1053,6 +1105,8 @@ func (s *service) clearCache() {
 	defer s.snapCacheRWL.Unlock()
 	s.snapCache = make([]*siotypes.Volume, 0)
 }
+
+// zhou: PowerFlex creates volumes in multiples of 8GiB, rounding up.
 
 // validateVolSize uses the CapacityRange range params to determine what size
 // volume to create, and returns an error if volume size would be greater than
@@ -1370,6 +1424,19 @@ func (s *service) ControllerPublishVolume(
 ) {
 	volumeContext := req.GetVolumeContext()
 	if volumeContext != nil {
+		// zhou:
+		/*
+			time="2022-11-14T09:18:42Z" level=info msg="VolumeContext:"
+			time="2022-11-14T09:18:42Z" level=info msg="    [Name]=pvc-1df6addd53"
+			time="2022-11-14T09:18:42Z" level=info msg="    [StoragePoolID]=01b7840400000000"
+			time="2022-11-14T09:18:42Z" level=info msg="    [StoragePoolName]=SP-SW_NVME-1"
+			time="2022-11-14T09:18:42Z" level=info msg="    [StorageSystem]=65b7aecf6ba7020f"
+			time="2022-11-14T09:18:42Z" level=info msg="    [storage.kubernetes.io/csiProvisionerIdentity]=1668417261581-8081-csi-vxflexos.dellemc.com"
+			time="2022-11-14T09:18:42Z" level=info msg="    [CreationTime]=2022-11-14 09:17:48 +0000 UTC"
+			time="2022-11-14T09:18:42Z" level=info msg="    [InstallationID]=5ce0aea83b363da8"
+			time="2022-11-14T09:18:42Z" level=info msg="Volume ID: 65b7aecf6ba7020f-8f90eb2c00000003 contains system ID: 65b7aecf6ba7020f. checkVolumesMap passed"
+
+		*/
 		Log.Printf("VolumeContext:")
 		for key, value := range volumeContext {
 			Log.Printf("    [%s]=%s", key, value)
@@ -1398,6 +1465,8 @@ func (s *service) ControllerPublishVolume(
 		return nil, status.Error(codes.InvalidArgument,
 			"systemID is not found in the request and there is no default system")
 	}
+
+	// zhou: probe array if needed.
 
 	if err := s.requireProbe(ctx, systemID); err != nil {
 		return nil, err
@@ -1477,6 +1546,9 @@ func (s *service) ControllerPublishVolume(
 		return resp, err
 	}
 	volID := getVolumeIDFromCsiVolumeID(csiVolID)
+
+	// zhou: get volume details via array client
+
 	vol, err := s.getVolByID(volID, systemID)
 	if err != nil {
 		if strings.EqualFold(err.Error(), sioGatewayVolumeNotFound) || strings.Contains(err.Error(), "must be a hexadecimal number") {
@@ -1584,6 +1656,8 @@ func (s *service) ControllerPublishVolume(
 	targetVolume := goscaleio.NewVolume(adminClient)
 	targetVolume.Volume = &siotypes.Volume{ID: vol.ID}
 
+	// zhou:
+
 	err = targetVolume.MapVolumeSdc(mapVolumeSdcParam)
 	if err != nil {
 		return nil, status.Errorf(codes.Internal,
@@ -1666,6 +1740,8 @@ func (s *service) setQoSParameters(
 	return nil
 }
 
+// zhou: README,
+
 // Determine when the multiple mappings flag should be set when calling MapVolumeSdc
 func shouldAllowMultipleMappings(isBlock bool, accessMode *csi.VolumeCapability_AccessMode) (string, error) {
 	switch accessMode.Mode {
@@ -1712,6 +1788,8 @@ func validateAccessType(
 		}
 	}
 }
+
+// zhou: README,
 
 func (s *service) ControllerUnpublishVolume(
 	ctx context.Context,
@@ -1793,7 +1871,10 @@ func (s *service) ControllerUnpublishVolume(
 		return &csi.ControllerUnpublishVolumeResponse{}, nil
 	}
 
+	// zhou: get the volume id from CSI volume id, the second part.
 	volID := getVolumeIDFromCsiVolumeID(csiVolID)
+
+	// zhou: get volume details via array client
 	vol, err := s.getVolByID(volID, systemID)
 	if err != nil {
 		if strings.EqualFold(err.Error(), sioGatewayVolumeNotFound) {
@@ -1831,6 +1912,8 @@ func (s *service) ControllerUnpublishVolume(
 		AllSdcs: "",
 	}
 
+	// zhou:
+
 	if err = targetVolume.UnmapVolumeSdc(unmapVolumeSdcParam); err != nil {
 		return nil, status.Errorf(codes.Internal,
 			"Error unmapping volume from node: %s", err.Error())
@@ -1838,6 +1921,8 @@ func (s *service) ControllerUnpublishVolume(
 
 	return &csi.ControllerUnpublishVolumeResponse{}, nil
 }
+
+// zhou: README, looks used for existing volume
 
 func (s *service) ValidateVolumeCapabilities(
 	ctx context.Context,
@@ -1927,6 +2012,8 @@ func checkValidAccessTypes(vcs []*csi.VolumeCapability) bool {
 	}
 	return true
 }
+
+// zhou: README,
 
 func valVolumeCaps(
 	vcs []*csi.VolumeCapability,
@@ -2346,6 +2433,8 @@ var maxVolumesSizeForArray = make(map[string]int64)
 
 var mutex = &sync.Mutex{}
 
+// zhou:
+
 func (s *service) GetCapacity(
 	ctx context.Context,
 	req *csi.GetCapacityRequest) (
@@ -2611,6 +2700,8 @@ func (s *service) getZoneFromZoneLabelKey(ctx context.Context, zoneLabelKey stri
 	return "", fmt.Errorf("label %s not found", zoneLabelKey)
 }
 
+// zhou: varify the connection with the arrays.
+
 // systemProbeAll will iterate through all arrays in service.opts.arrays and probe them. If failed, it logs
 // the failed system name
 func (s *service) systemProbeAll(ctx context.Context) error {
@@ -2664,6 +2755,8 @@ func (s *service) systemProbeAll(ctx context.Context) error {
 	return nil
 }
 
+// zhou: connect to a array, verify System ID and name.
+
 // systemProbe will probe the given array
 func (s *service) systemProbe(ctx context.Context, array *ArrayConnectionData) error {
 	// Check that we have the details needed to login to the Gateway
@@ -2689,6 +2782,8 @@ func (s *service) systemProbe(ctx context.Context, array *ArrayConnectionData) e
 	}
 
 	systemID := array.SystemID
+
+	// zhou: setup client and authZ for this array
 
 	// Create ScaleIO API client if needed
 	if s.adminClients[systemID] == nil {
@@ -2720,6 +2815,8 @@ func (s *service) systemProbe(ctx context.Context, array *ArrayConnectionData) e
 		}
 	}
 
+	// zhou:
+
 	// initialize system if needed
 	if s.systems[systemID] == nil {
 		system, err := client.WithContext(ctx).FindSystem(array.SystemID, array.SystemID, "")
@@ -2731,11 +2828,15 @@ func (s *service) systemProbe(ctx context.Context, array *ArrayConnectionData) e
 
 		s.systems[systemID] = system
 		if system.System != nil && system.System.Name != "" {
+			// zhou: "Found Name for system=block-legacy-gateway with ID=65b7aecf6ba7020f"
 			Log.Printf("Found Name for system=%s with ID=%s", system.System.Name, system.System.ID)
 			s.connectedSystemNameToID[system.System.Name] = system.System.ID
 			s.systems[system.System.ID] = system
 			s.adminClients[system.System.ID] = client
 		}
+
+		// zhou: allow using system name in some cases.
+
 		// associate alternate system name to systemID
 		for _, name := range altSystemNames {
 			s.systems[name] = system
@@ -2743,6 +2844,8 @@ func (s *service) systemProbe(ctx context.Context, array *ArrayConnectionData) e
 			s.connectedSystemNameToID[name] = system.System.ID
 		}
 	}
+
+	// zhou: get system details via REST api
 
 	sysID := systemID
 	if id, ok := s.connectedSystemNameToID[systemID]; ok {
@@ -2765,6 +2868,8 @@ func (s *service) systemProbe(ctx context.Context, array *ArrayConnectionData) e
 	return nil
 }
 
+// zhou: if array has not been probed, perform probe.
+
 func (s *service) requireProbe(ctx context.Context, systemID string) error {
 	if s.adminClients[systemID] == nil {
 		Log.Debugf("probing system %s automatically", systemID)
@@ -2782,6 +2887,8 @@ func (s *service) requireProbe(ctx context.Context, systemID string) error {
 
 	return nil
 }
+
+// zhou: README,
 
 // CreateSnapshot creates a snapshot.
 // If Parameters["VolumeIDList"] has a comma separated list of additional volumes, they will be
@@ -3498,6 +3605,8 @@ func (s *service) Clone(req *csi.CreateVolumeRequest,
 	return &csi.CreateVolumeResponse{Volume: csiVolume}, nil
 }
 
+// zhou: README,
+
 // ControllerGetVolume fetch current information about a volume
 // returns volume condition if found else returns not found
 func (s *service) ControllerGetVolume(_ context.Context, req *csi.ControllerGetVolumeRequest) (*csi.ControllerGetVolumeResponse, error) {
@@ -3517,6 +3626,8 @@ func (s *service) ControllerGetVolume(_ context.Context, req *csi.ControllerGetV
 		return nil, status.Error(codes.InvalidArgument,
 			"systemID is not found in the request and there is no default system")
 	}
+
+	// zhou:
 
 	vol, err := s.getVolByID(volID, systemID)
 	if err != nil {

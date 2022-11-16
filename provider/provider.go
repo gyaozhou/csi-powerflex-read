@@ -22,15 +22,19 @@ import (
 // Log init
 var Log = logrus.New()
 
+// zhou: commom entry for both CSI controller and node plugin/pod.
+//       In order to fulfill "gocsi" which is a framework of CSI.
+
 // New returns a new Mock Storage Plug-in Provider.
 func New() gocsi.StoragePluginProvider {
+	// zhou: service implements identity/controller/node server's methods.
 	svc := service.New()
 	return &gocsi.StoragePlugin{
 		Controller:                svc,
 		Identity:                  svc,
 		Node:                      svc,
 		BeforeServe:               svc.BeforeServe,
-		RegisterAdditionalServers: svc.RegisterAdditionalServers,
+		RegisterAdditionalServers: svc.RegisterAdditionalServers, // zhou: used to handler Dell CSM
 
 		EnvVars: []string{
 			// Enable request validation

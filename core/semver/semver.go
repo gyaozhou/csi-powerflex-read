@@ -96,6 +96,12 @@ func main() {
 		defer fout.Close()
 	}
 
+	// zhou: execute to parse the latest tag.
+	//       # git describe --tags --long --dirty
+	//       v11.1.1-0-gb846275-dirty
+	//       The tag should be in format "v11.1.1"
+	//       # git tag -a v11.1.1 -m 'test for read'
+
 	gitdesc := chkErr(doExec("git", "describe", "--tags", "--long", "--dirty"))
 	rx := regexp.MustCompile(
 		`^[^\d]*(\d+)\.(\d+)\.(\d+)(?:-([a-zA-Z].+?))?(?:-(\d+)-g(.+?)(?:-(dirty))?)?\s*$`)

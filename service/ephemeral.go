@@ -54,6 +54,8 @@ func parseSize(size string) (int64, error) {
 	return 0, errors.New(message)
 }
 
+// zhou: README, used by NodePublishVolume().
+
 // Call complete stack: systemProbe, CreateVolume, ControllerPublishVolume, and NodePublishVolume
 func (s *service) ephemeralNodePublish(
 	ctx context.Context,

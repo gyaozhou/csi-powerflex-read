@@ -89,6 +89,8 @@ var (
 // LookupEnv - Fetches the environment var value
 var LookupEnv = lookupEnv
 
+// zhou: "/vxflexos-config/config"
+
 // ArrayConfigFile is file name with array connection data
 var ArrayConfigFile string
 
@@ -149,12 +151,29 @@ var Manifest = map[string]string{
 	"formed": core.CommitTime.Format(time.RFC1123),
 }
 
+// zhou: declare that this interface, fulfill methods used in gocsi.StoragePluginProvider.
+//       This is a duck interface. Refer to provider.go/New()
+
 // Service is the CSI Mock service provider.
 type Service interface {
 	csi.ControllerServer
 	csi.IdentityServer
 	csi.NodeServer
+
+	// zhou: "BeforeServe is an optional callback that is invoked after the
+	//        StoragePlugin has been initialized, just prior to the creation
+	//        of the gRPC server. This callback may be used to perform custom
+	//        initialization logic, modify the interceptors and server options,
+	//        or prevent the server from starting by returning a non-nil error."
+	//
+	//       Will be invoked only one time.
+
 	BeforeServe(context.Context, *gocsi.StoragePlugin, net.Listener) error
+
+	// zhou: "RegisterAdditionalServers allows the driver to register additional
+	// grpc servers on the same grpc connection. These can be used
+	// for proprietary extensions."
+
 	RegisterAdditionalServers(server *grpc.Server)
 	ProcessMapSecretChange() error
 }
@@ -169,7 +188,7 @@ type Opts struct {
 	// map from system name to ArrayConnectionData
 	arrays                     map[string]*ArrayConnectionData
 	defaultSystemID            string // ID of default system
-	SdcGUID                    string
+	SdcGUID                    string // zhou: current node SDC UGID
 	Thick                      bool
 	AutoProbe                  bool
 	DisableCerts               bool   // used for unit testing only
@@ -191,9 +210,12 @@ type Opts struct {
 	zoneLabelKey               string
 }
 
+// zhou: implements a collection of interfaces used in gocsi.StoragePlugin.
+//       Refer to "provider.go"
+
 type service struct {
 	opts                Opts
-	adminClients        map[string]*sio.Client
+	adminClients        map[string]*sio.Client // zhou: clients for each arrays
 	systems             map[string]*sio.System
 	mode                string
 	volCache            []*siotypes.Volume
@@ -207,7 +229,7 @@ type service struct {
 	statisticsCounter   int
 	// maps the first 24 bits of a volume ID to the volume's systemID
 	volumePrefixToSystems   map[string][]string
-	connectedSystemNameToID map[string]string
+	connectedSystemNameToID map[string]string // zhou: if system name found here, need to be converted to system id.
 }
 
 type Config struct {
@@ -224,8 +246,13 @@ func (s *service) Addrs(interfaceObj *net.Interface) ([]net.Addr, error) {
 	return interfaceObj.Addrs()
 }
 
+// zhou: handle "/vxflexos-config/config" and "/vxflexos-config-params/driver-config-params.yaml"
+//       dynamic changes.
+
 // Process dynamic changes to configMap or Secret.
 func (s *service) ProcessMapSecretChange() error {
+	// zhou: "Viper is an application configuration system."
+
 	// Update dynamic config params
 	vc := viper.New()
 	vc.AutomaticEnv()
@@ -234,9 +261,15 @@ func (s *service) ProcessMapSecretChange() error {
 	if err := vc.ReadInConfig(); err != nil {
 		Log.WithError(err).Error("unable to read config file, using default values")
 	}
+
+	// zhou: set log level and format according to ConfigMap "vxflexos-config-params"
+
 	if err := s.updateDriverConfigParams(Log, vc); err != nil {
 		return err
 	}
+
+	// zhou: support dynamic configuration file change
+
 	vc.WatchConfig()
 	vc.OnConfigChange(func(_ fsnotify.Event) {
 		// Putting in mutex to allow tests to pass with race flag
@@ -248,9 +281,14 @@ func (s *service) ProcessMapSecretChange() error {
 		}
 	})
 
+	// zhou: support dynamic PowerFlex array configuration change !!!
+
 	// dynamic array secret change
 	va := viper.New()
 	va.SetConfigFile(ArrayConfigFile)
+
+	// zhou: "level=info msg="array configuration file" file=/vxflexos-config/config"
+
 	Log.WithField("file", ArrayConfigFile).Info("array configuration file")
 
 	va.WatchConfig()
@@ -260,15 +298,22 @@ func (s *service) ProcessMapSecretChange() error {
 		mx.Lock()
 		defer mx.Unlock()
 		Log.WithField("file", ArrayConfigFile).Info("array configuration file changed")
+
+		// zhou: once PowerFlex array configuration changed, parse the file again.
+
 		var err error
 		s.opts.arrays, err = getArrayConfig(context.Background())
 		if err != nil {
 			Log.WithError(err).Error("unable to reload multi array config file")
 		}
+
+		// zhou: probe PowerFlex array
+
 		err = s.doProbe(context.Background())
 		if err != nil {
 			Log.WithError(err).Error("unable to probe array in multi array config")
 		}
+
 		// log csiNode topology keys
 		if err = s.logCsiNodeTopologyKeys(); err != nil {
 			Log.WithError(err).Error("unable to log csiNode topology keys")
@@ -276,6 +321,8 @@ func (s *service) ProcessMapSecretChange() error {
 	})
 	return nil
 }
+
+// zhou: README, CSI topology ???
 
 func (s *service) logCsiNodeTopologyKeys() error {
 	if K8sClientset == nil {
@@ -346,6 +393,8 @@ func New() Service {
 	}
 }
 
+// zhou: set log level and format according to ConfigMap "vxflexos-config-params"
+
 func (s *service) updateDriverConfigParams(logger *logrus.Logger, v *viper.Viper) error {
 	logFormat := v.GetString("CSI_LOG_FORMAT")
 	logFormat = strings.ToLower(logFormat)
@@ -381,10 +430,15 @@ func (s *service) updateDriverConfigParams(logger *logrus.Logger, v *viper.Viper
 	return nil
 }
 
+// zhou: README, will be invoked only one time before serve RPC in CSI driver controller plugin or node plugin.
+
 func (s *service) BeforeServe(
 	//nolint:revive
 	ctx context.Context, sp *gocsi.StoragePlugin, lis net.Listener,
 ) error {
+
+	// zhou: used for log
+
 	defer func() {
 		fields := map[string]interface{}{
 			"sdcGUID":                s.opts.SdcGUID,
@@ -402,14 +456,18 @@ func (s *service) BeforeServe(
 			"ExternalAccess":         s.opts.ExternalAccess,
 			"KubeNodeName":           s.opts.KubeNodeName,
 		}
-
+		// zhou: "configured csi-vxflexos.dellemc.com" IsHealthMonitorEnabled=false allowRWOMultiPodAccess=false autoprobe=true mode=controller privatedir=/dev/disk/csi-vxflexos sdcGUID= thickprovision=false
 		Log.WithFields(fields).Infof("configured %s", Name)
 	}()
+
+	// zhou: "X_CSI_MODE"
 
 	// Get the SP's operating mode.
 	s.mode = csictx.Getenv(ctx, gocsi.EnvVarMode)
 
 	opts := Opts{}
+
+	// zhou: parse the configured PowerFlex arrays
 
 	var err error
 
@@ -427,10 +485,15 @@ func (s *service) BeforeServe(
 		return err
 	}
 
+	// zhou: register callback to handle "/vxflexos-config/config" and
+	//       "/vxflexos-config-params/driver-config-params.yaml" dynamic changes.
+
 	if err = s.ProcessMapSecretChange(); err != nil {
 		Log.Warnf("unable to configure dynamic configMap secret change detection : %s", err.Error())
 		return err
 	}
+
+	// zhou: if GUID set in env "X_CSI_VXFLEXOS_SDCGUID"
 
 	if guid, ok := csictx.LookupEnv(ctx, EnvSDCGUID); ok {
 		opts.SdcGUID = guid
@@ -438,22 +501,34 @@ func (s *service) BeforeServe(
 	if pd, ok := csictx.LookupEnv(ctx, "X_CSI_PRIVATE_MOUNT_DIR"); ok {
 		s.privDir = pd
 	}
+
+	// zhou: Snapshot Consistent Group delete when ?
+
 	if snapshotCGDelete, ok := csictx.LookupEnv(ctx, "X_CSI_VXFLEXOS_ENABLESNAPSHOTCGDELETE"); ok {
 		if snapshotCGDelete == "true" {
 			opts.EnableSnapshotCGDelete = true
 		}
 	}
+
+	// zhou: list VolumeSnapshot
+
 	if listVolumesSnapshots, ok := csictx.LookupEnv(ctx, "X_CSI_VXFLEXOS_ENABLELISTVOLUMESNAPSHOTS"); ok {
 		if listVolumesSnapshots == "true" {
 			opts.EnableListVolumesSnapshots = true
 		}
 	}
+
+	// zhou: support RWO for many pods.
+
 	if allowRWOMultiPodAccess, ok := csictx.LookupEnv(ctx, EnvAllowRWOMultiPodAccess); ok {
 		if allowRWOMultiPodAccess == "true" {
 			opts.AllowRWOMultiPodAccess = true
 			mountAllowRWOMultiPodAccess = true
 		}
 	}
+
+	// zhou:
+
 	if healthMonitor, ok := csictx.LookupEnv(ctx, EnvIsHealthMonitorEnabled); ok {
 		if healthMonitor == "true" {
 			opts.IsHealthMonitorEnabled = true
@@ -477,6 +552,8 @@ func (s *service) BeforeServe(
 			opts.IsQuotaEnabled = true
 		}
 	}
+
+	// zhou: "/dev/disk/csi-vxflexos"
 
 	if s.privDir == "" {
 		s.privDir = defaultPrivDir
@@ -543,6 +620,7 @@ func (s *service) BeforeServe(
 	// Update the ConfigMap with the Interface IPs
 	s.updateConfigMap(s.getIPAddressByInterface, ConfigMapFilePath)
 
+	// zhou: perform probe by default
 	if _, ok := csictx.LookupEnv(ctx, "X_CSI_VXFLEXOS_NO_PROBE_ON_START"); !ok {
 		Log.Printf("BeforeServe probing starting %s", time.Now().Format("15:04:05.000000000"))
 		// probe before the server starts, to avoid errors in the controller, we must return before 2 seconds.
@@ -718,11 +796,18 @@ func (s *service) checkNFS(ctx context.Context, systemID string) (bool, error) {
 	return false, nil
 }
 
+// zhou: README,
+
 // Probe all systems managed by driver
 func (s *service) doProbe(ctx context.Context) error {
 	// Putting in mutex to allow tests to pass with race flag
 	px.Lock()
 	defer px.Unlock()
+
+	// zhou: env "X_CSI_MODE" is used to discriminate "node" and "controller". Both of them share
+	//       the single image.
+
+	// zhou: CSI controller pod, connect to arrays and verify system id.
 
 	if !s.isNodeMode() {
 		Log.Info("[doProbe] controllerProbe")
@@ -730,6 +815,8 @@ func (s *service) doProbe(ctx context.Context) error {
 			return err
 		}
 	}
+
+	// zhou: CSI node pod
 
 	// Do a node probe
 	if !s.isControllerMode() {
@@ -753,6 +840,8 @@ func (s *service) RegisterAdditionalServers(server *grpc.Server) {
 	volumeGroupSnapshot.RegisterVolumeGroupSnapshotServer(server, s)
 	replication.RegisterReplicationServer(server, s)
 }
+
+// zhou: KeyThickProvisioning = "thickprovisioning"
 
 // getVolProvisionType returns a string indicating thin or thick provisioning
 // If the type is specified in the params map, that value is used, if not, defer
@@ -778,12 +867,17 @@ func (s *service) getVolProvisionType(params map[string]string) string {
 	return volType
 }
 
+// zhou: get volume details via array client
+
 // getVolByID returns the PowerFlex volume from the given Powerflex volume ID
 func (s *service) getVolByID(id string, systemID string) (*siotypes.Volume, error) {
 	adminClient := s.adminClients[systemID]
 	if adminClient == nil {
 		return nil, fmt.Errorf("can't find adminClient by id %s", systemID)
 	}
+
+	// zhou: rest api "/api/instances/Volume::[volumeid]", get volume details
+
 	// The GetVolume API returns a slice of volumes, but when only passing
 	// in a volume ID, the response will be just the one volume
 	vols, err := adminClient.GetVolume("", strings.TrimSpace(id), "", "", false)
@@ -812,6 +906,8 @@ func (s *service) getFilesystemByID(id string, systemID string) (*siotypes.FileS
 	return fs, nil
 }
 
+// zhou: get SDC list registered in array, and check whether the "sdcGUID" is in the list.
+
 // getSDCID returns SDC ID from the given sdc GUID and system ID.
 func (s *service) getSDCID(sdcGUID string, systemID string) (string, error) {
 	sdcGUID = strings.ToUpper(sdcGUID)
@@ -820,6 +916,7 @@ func (s *service) getSDCID(sdcGUID string, systemID string) (string, error) {
 	if s.systems[systemID] == nil {
 		return "", fmt.Errorf("getSDCID error systemID not found: %s", systemID)
 	}
+
 	id, err := s.systems[systemID].FindSdc("SdcGUID", sdcGUID)
 	if err != nil {
 		return "", fmt.Errorf("error finding SDC from GUID: %s, err: %s",
@@ -855,6 +952,8 @@ func (s *service) getStoragePoolID(name, systemID, pdID string) (string, error) 
 
 	return pool.ID, nil
 }
+
+// zhou: assemble CSI volume response
 
 // getCSIVolume converts the given siotypes.Volume to a CSI volume
 func (s *service) getCSIVolume(vol *siotypes.Volume, systemID string) *csi.Volume {
@@ -991,6 +1090,11 @@ func (s *service) logStatistics() {
 	}
 }
 
+// zhou: get configured PowerFlex arrays' connection info.
+//       Parse "/vxflexos-config/config" mapped from Secret "vxflexos-config", which converted from
+//       "csi-powerflex/sample/config.yaml".
+//       In this file, describe storage arrays' description.
+
 func getArrayConfig(_ context.Context) (map[string]*ArrayConnectionData, error) {
 	arrays := make(map[string]*ArrayConnectionData)
 
@@ -1008,6 +1112,7 @@ func getArrayConfig(_ context.Context) (map[string]*ArrayConnectionData, error) 
 	}
 
 	if string(config) != "" {
+		// zhou: parse yaml file
 		creds := make([]ArrayConnectionData, 0)
 		// support backward compatibility
 		config, _ = yaml.JSONToYAML(config)
@@ -1015,6 +1120,8 @@ func getArrayConfig(_ context.Context) (map[string]*ArrayConnectionData, error) 
 		if err != nil {
 			return nil, fmt.Errorf("unable to parse the credentials: %v", err)
 		}
+
+		// zhou: "vxflexos-config" secret, not "vxflexos-creds"
 
 		if len(creds) == 0 {
 			return nil, fmt.Errorf("%s", "no arrays are provided in vxflexos-creds secret")
@@ -1038,6 +1145,7 @@ func getArrayConfig(_ context.Context) (map[string]*ArrayConnectionData, error) 
 			if c.Endpoint == "" {
 				return nil, fmt.Errorf("invalid value for Endpoint at index %d", i)
 			}
+
 			// ArrayConnectionData
 			if c.AllSystemNames != "" {
 				names := strings.Split(c.AllSystemNames, ",")
@@ -1083,6 +1191,8 @@ func getArrayConfig(_ context.Context) (map[string]*ArrayConnectionData, error) 
 
 	return arrays, nil
 }
+
+// zhou: the second part of CSI Volume ID is volume ID.
 
 // getVolumeIDFromCsiVolumeId returns PowerFlex volume ID from CSI volume ID
 func getVolumeIDFromCsiVolumeID(csiVolID string) string {
@@ -1160,6 +1270,10 @@ func (s *service) getFileInterface(systemID string, fs *siotypes.FileSystem, cli
 	}
 	return fileInterface, err
 }
+
+// zhou: the first part of CSI Volume ID is system ID.
+//       "Volume ID: 65b7aecf6ba7020f-8f90c41b00000000 contains system ID: 65b7aecf6ba7020f. checkVolumesMap passed"
+//       "Volume ID: 65b7aecf6ba7020f-8f90eb2b00000002 contains system ID: 65b7aecf6ba7020f. checkVolumesMap passed"
 
 // getSystemIDFromCsiVolumeId returns PowerFlex volume ID from CSI volume ID
 func (s *service) getSystemIDFromCsiVolumeID(csiVolID string) string {
@@ -1568,7 +1682,12 @@ func (s *service) UpdateVolumePrefixToSystemsMap(systemID string) error {
 	return nil
 }
 
+// zhou: validate the CSI volume id is legal, ensure no ambiguity
+
 func (s *service) checkVolumesMap(volumeID string) error {
+
+	// zhou: deduce system id from volume id.
+
 	systemID := s.getSystemIDFromCsiVolumeID(volumeID)
 
 	// ID is legacy, so we  ensure it's only found on default system

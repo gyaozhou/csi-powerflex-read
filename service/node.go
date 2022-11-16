@@ -112,6 +112,8 @@ func (s *service) NodeUnstageVolume(
 	return &csi.NodeUnstageVolumeResponse{}, nil
 }
 
+// zhou: README, invoked by external-attacher
+
 func (s *service) NodePublishVolume(
 	ctx context.Context,
 	req *csi.NodePublishVolumeRequest) (
@@ -156,9 +158,12 @@ func (s *service) NodePublishVolume(
 		isNFS = true
 	}
 
+	// zhou: volume ID within PowerFlex
+
 	volID := getVolumeIDFromCsiVolumeID(csiVolID)
 	Log.Printf("[NodePublishVolume] volumeID: %s", volID)
 
+	// zhou: system ID of PowerFlex
 	systemID := s.getSystemIDFromCsiVolumeID(csiVolID)
 	Log.Printf("[NodePublishVolume] systemID: %s harvested from csiVolID: %s", systemID, csiVolID)
 	if systemID == "" {
@@ -169,6 +174,8 @@ func (s *service) NodePublishVolume(
 		return nil, status.Error(codes.InvalidArgument,
 			"systemID is not found in the request and there is no default system")
 	}
+
+	// zhou: need to contact this PowerFlex firstly if not.
 
 	Log.Printf("[NodePublishVolume] We are about to probe the system with systemID %s", systemID)
 	// Probe the system to make sure it is managed by driver
@@ -217,10 +224,14 @@ func (s *service) NodePublishVolume(
 		return &csi.NodePublishVolumeResponse{}, nil
 	}
 
+	// zhou:
+
 	sdcMappedVol, err := s.getSDCMappedVol(volID, systemID, publishGetMappedVolMaxRetry)
 	if err != nil {
 		return nil, status.Error(codes.InvalidArgument, err.Error())
 	}
+
+	// zhou:
 
 	if err := publishVolume(req, s.privDir, sdcMappedVol.SdcDevice, reqID); err != nil {
 		return nil, err
@@ -228,6 +239,8 @@ func (s *service) NodePublishVolume(
 
 	return &csi.NodePublishVolumeResponse{}, nil
 }
+
+// zhou: README, invoked by external-attacher
 
 func (s *service) NodeUnpublishVolume(
 	ctx context.Context,
@@ -388,6 +401,8 @@ func (s *service) NodeUnpublishVolume(
 	return &csi.NodeUnpublishVolumeResponse{}, nil
 }
 
+// zhou: README, check host local block devices ???
+
 // Get sdc mapped volume from the given volume ID/systemID
 func (s *service) getSDCMappedVol(volumeID string, systemID string, maxRetry int) (*goscaleio.SdcMappedVolume, error) {
 	// If not found immediately, give a little time for controller to
@@ -412,6 +427,8 @@ func (s *service) getSDCMappedVol(volumeID string, systemID string, maxRetry int
 	}
 	return sdcMappedVol, err
 }
+
+// zhou: README,
 
 // Get the volumes published to the SDC (given by SdcMappedVolume) and scan for requested vol id
 func getMappedVol(volID string, systemID string) (*goscaleio.SdcMappedVolume, error) {
@@ -450,11 +467,15 @@ func (s *service) getSystemName(_ context.Context, systems []string) bool {
 	return true
 }
 
+// zhou: README, fetch info from /dev/scini.
+
 // nodeProbe fetchs the SDC GUID by drv_cfg and the systemIDs/names by getSystemName method.
 // It also makes sure private directory(privDir) is created
 func (s *service) nodeProbe(ctx context.Context) error {
 	// make sure the kernel module is loaded
 	if kmodLoaded(s.opts) {
+		// zhou: fetch GUID (Node ID) via "/dev/scini"
+
 		// fetch the SDC GUID
 		if s.opts.SdcGUID == "" {
 			// try to query the SDC GUID
@@ -468,6 +489,8 @@ func (s *service) nodeProbe(ctx context.Context) error {
 			Log.WithField("guid", s.opts.SdcGUID).Info("set SDC GUID")
 		}
 
+		// zhou: get a map of system id and corresponding SDC id via /dev/scini.
+
 		// fetch the systemIDs
 		var err error
 		if len(connectedSystemID) == 0 {
@@ -476,6 +499,8 @@ func (s *service) nodeProbe(ctx context.Context) error {
 				return status.Errorf(codes.FailedPrecondition, "%s", err.Error())
 			}
 		}
+
+		// zhou: specify the GUID naming rule
 
 		// 	rename SDC
 		//	case1: if IsSdcRenameEnabled=true and prefix given then set the prefix+worker_node_name for sdc name.
@@ -487,6 +512,8 @@ func (s *service) nodeProbe(ctx context.Context) error {
 				return err
 			}
 		}
+
+		// zhou: If PowerFlex specify guid, this feature must be enabled.
 
 		// support for pre-approved guid
 		if s.opts.IsApproveSDCEnabled {
@@ -512,6 +539,9 @@ func (s *service) nodeProbe(ctx context.Context) error {
 	return nil
 }
 
+// zhou: during CSI node plugin init, checking SDC approval if needed.
+//       restricted sdc mode == none/guid/hostip.
+
 func (s *service) approveSDC(opts Opts) error {
 	for _, systemID := range connectedSystemID {
 		system := s.systems[systemID]
@@ -525,6 +555,9 @@ func (s *service) approveSDC(opts Opts) error {
 		if err != nil {
 			return status.Errorf(codes.FailedPrecondition, "%s", err)
 		}
+
+		// zhou: if PowerFlex restricted SDC mode == GUID, and have not been approved,
+		//       approved it.
 
 		// fetch the restrictedSdcMode
 		if system.System.RestrictedSdcMode == "Guid" {
@@ -603,6 +636,8 @@ func (s *service) getSDCName(sdcGUID string, systemID string) error {
 	return nil
 }
 
+// zhou:
+
 func kmodLoaded(opts Opts) bool {
 	// opts.Lsmod is introduced solely for unit testing.
 	var out []byte
@@ -630,6 +665,8 @@ func kmodLoaded(opts Opts) bool {
 
 	return false
 }
+
+// zhou: README, get map of system id and corresponding SDC id via /dev/scini.
 
 func getSystemsKnownToSDC() ([]string, error) {
 	systems := make([]string, 0)
@@ -710,6 +747,8 @@ func (s *service) NodeGetCapabilities(
 	}, nil
 }
 
+// zhou: kubelet will invoke this function to complete Plugin registration.
+
 // NodeGetInfo returns Node information
 // NodeId is the identifier of the node. If SDC is installed, SDC GUID will be appended to NodeId
 // MaxVolumesPerNode (optional) is left as 0 which means unlimited
@@ -758,6 +797,9 @@ func (s *service) NodeGetInfo(
 	}
 
 	Log.Debugf("MaxVolumesPerNode: %v\n", maxVxflexosVolumesPerNode)
+
+	// zhou: SystemTopologySystemValue string = "csi-vxflexos.dellemc.com"
+	// "csi-vxflexos.dellemc.com/9427e836279ed40f: csi-vxflexos.dellemc.com"
 
 	// Create the topology keys
 	// csi-vxflexos.dellemc.com/<systemID>: <provisionerName>
@@ -813,6 +855,8 @@ func (s *service) NodeGetInfo(
 		MaxVolumesPerNode: maxVxflexosVolumesPerNode,
 	}, nil
 }
+
+// zhou: README,
 
 // NodeGetVolumeStats will check the status of a volume given its ID and path
 // if volume is healthy, stats on volume usage will be returned
@@ -959,6 +1003,8 @@ func (s *service) NodeGetVolumeStats(ctx context.Context, req *csi.NodeGetVolume
 		},
 	}, nil
 }
+
+// zhou: README,
 
 func (s *service) NodeExpandVolume(ctx context.Context, req *csi.NodeExpandVolumeRequest) (*csi.NodeExpandVolumeResponse, error) {
 	var reqID string

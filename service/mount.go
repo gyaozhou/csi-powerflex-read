@@ -75,6 +75,8 @@ func GetDevice(path string) (*Device, error) {
 	}, nil
 }
 
+// zhou: README, used in NodePublishVolume()
+
 // publishVolume uses the parameters in req to bindmount the underlying block
 // device to the requested target path. A private mount is performed first
 // within the given privDir directory.
@@ -107,6 +109,8 @@ func publishVolume(
 			"error getting block device for volume: %s, err: %s",
 			id, err.Error())
 	}
+
+	// zhou:
 
 	isBlock, mntVol, accMode, multiAccessFlag, err := validateVolumeCapability(volCap, ro)
 	if err != nil {
@@ -218,6 +222,9 @@ func publishVolume(
 				mntFlags = append(mntFlags, "ro")
 			}
 			fsFormatOption := req.GetVolumeContext()[KeyMkfsFormatOption]
+
+			// zhou:
+
 			if err := handlePrivFSMount(
 				ctx, accMode, sysDevice, mntFlags, fs, privTgt, fsFormatOption); err != nil {
 				// K8S may have removed the desired mount point. Clean up the private target.
@@ -491,6 +498,8 @@ func isVolumeMounted(ctx context.Context, filterStr string, target string) (bool
 	return false, nil
 }
 
+// zhou: README,
+
 func handlePrivFSMount(
 	ctx context.Context,
 	accMode *csi.VolumeCapability_AccessMode,
@@ -593,6 +602,8 @@ func mkdir(path string) (bool, error) {
 	}
 	return false, nil
 }
+
+// zhou: README,
 
 // unpublishVolume removes the bind mount to the target path, and also removes
 // the mount to the private mount directory if the volume is no longer in use.
@@ -773,6 +784,8 @@ func evalSymlinks(path string) string {
 	return d
 }
 
+// zhou: README,
+
 // Given a volume capability, validates it and returns:
 // boolean isBlock -- the capability is for a block device
 // csi.VolumeCapability_MountVolume - contains FsType and MountFlags
@@ -780,14 +793,17 @@ func evalSymlinks(path string) string {
 // string multiAccessFlag - "rw" or "ro" or "" as appropriate
 // error
 func validateVolumeCapability(volCap *csi.VolumeCapability, readOnly bool) (bool, *csi.VolumeCapability_MountVolume, *csi.VolumeCapability_AccessMode, string, error) {
+
 	var mntVol *csi.VolumeCapability_MountVolume
 	isBlock := false
 	isMount := false
 	multiAccessFlag := ""
 	accMode := volCap.GetAccessMode()
+
 	if accMode == nil {
 		return false, mntVol, nil, "", status.Error(codes.InvalidArgument, "Volume Access Mode is required")
 	}
+
 	if blockVol := volCap.GetBlock(); blockVol != nil {
 		isBlock = true
 		switch accMode.GetMode() {
@@ -805,6 +821,7 @@ func validateVolumeCapability(volCap *csi.VolumeCapability, readOnly bool) (bool
 			Log.Warnf("read only for Block Volume is not recommended")
 		}
 	}
+
 	mntVol = volCap.GetMount()
 	if mntVol != nil {
 		isMount = true

@@ -37,10 +37,31 @@ func main() {
 	// We always want to enable Request and Response logging(no reason for users to control this)
 	_ = os.Setenv(gocsi.EnvVarReqLogging, "true")
 	_ = os.Setenv(gocsi.EnvVarRepLogging, "true")
+
+	// zhou: "--array-config=/vxflexos-config/config" specified in csi both controller and node plugin.
+	//
+	//       Secret volume "vxflexos-config" will be mounted in this path.
+	//       The Secret is created from "powerflex-csi/sample/config.yaml"
+
 	arrayConfigfile := flag.String("array-config", "", "yaml file with array(s) configuration")
+
+	// zhou: "--driver-config-params=/vxflexos-config-params/driver-config-params.yaml"
+	//       specified in csi both controller and node plugin.
+	//
+	//       ConfigMap volume "vxflexos-config-params" will be mounted in this path.
+	//       The ConfigMap just contains
+	//       CSI_LOG_LEVEL: "debug"
+	//       CSI_LOG_FORMAT: "TEXT"
+
 	driverConfigParamsfile := flag.String("driver-config-params", "", "yaml file with driver config params")
+
+	// zhou: "--leader-election" specified in csi controller plugin only.
+
 	enableLeaderElection := flag.Bool("leader-election", false, "boolean to enable leader election")
 	leaderElectionNamespace := flag.String("leader-election-namespace", "", "namespace where leader election lease will be created")
+
+	// zhou: optional
+
 	kubeconfig := flag.String("kubeconfig", "", "absolute path to the kubeconfig file")
 	flag.Parse()
 
@@ -53,6 +74,9 @@ func main() {
 		fmt.Fprintf(os.Stderr, "driver-config-params argument is mandatory")
 		os.Exit(1)
 	}
+
+	// zhou: not struct, just module's global variables.
+
 	service.ArrayConfigFile = *arrayConfigfile
 	service.DriverConfigParamsFile = *driverConfigParamsfile
 	service.KubeConfig = *kubeconfig
@@ -69,6 +93,13 @@ func main() {
 		os.Exit(0)
 	}
 
+	// zhou: service name is "csi-vxflexos.dellemc.com"
+	//       define fucntion "run" here.
+	//
+	//       "gocsi.Run()", will create a gRPC server, and register handlers defined in
+	//       "provider.New()" to it.
+	//       Then, all the gPRC will be handled by "service.New()"
+
 	run := func(ctx context.Context) {
 		gocsi.Run(ctx, service.Name, "A PowerFlex Container Storage Interface (CSI) Plugin",
 			usage, provider.New())
@@ -76,6 +107,7 @@ func main() {
 	if !*enableLeaderElection {
 		run(context.Background())
 	} else {
+		// zhou: "driver-csi-vxflexos-dellemc-com"
 		driverName := strings.Replace(service.Name, ".", "-", -1)
 		lockName := fmt.Sprintf("driver-%s", driverName)
 		err := k8sutils.CreateKubeClientSet()

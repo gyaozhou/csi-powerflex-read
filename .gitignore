@@ -9,5 +9,7 @@ semver.mk
 goscaleio/
 gofsutil/
 .idea
+cscope.files
+cscope.out
 .vscode
 *.log

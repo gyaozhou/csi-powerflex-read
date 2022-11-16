@@ -139,6 +139,8 @@ function install_driver() {
     log step "Installing Driver"
   fi
 
+  # zhou: install-csi-vxflexos.sh will be invoked here.
+
   # run driver specific install script
   local SCRIPTNAME="install-${DRIVER}.sh"
   if [ -f "${SCRIPTDIR}/${SCRIPTNAME}" ]; then
