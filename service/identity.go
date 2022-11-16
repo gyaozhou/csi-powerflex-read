@@ -25,6 +25,8 @@ import (
 	"github.com/dell/csi-vxflexos/v2/core"
 )
 
+// zhou: csi-node-driver-registrar invoke RPC of CSI identity service
+
 func (s *service) GetPluginInfo(
 	ctx context.Context,
 	req *csi.GetPluginInfoRequest) (
@@ -36,6 +38,8 @@ func (s *service) GetPluginInfo(
 		Manifest:      Manifest,
 	}, nil
 }
+
+// zhou: RPC of CSI identity service
 
 func (s *service) GetPluginCapabilities(
 	ctx context.Context,
@@ -70,6 +74,9 @@ func (s *service) GetPluginCapabilities(
 	}
 	return &rep, nil
 }
+
+// zhou: RPC of CSI identity service
+//
 
 func (s *service) Probe(
 	ctx context.Context,

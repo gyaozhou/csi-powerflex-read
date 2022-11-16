@@ -17,6 +17,8 @@ import (
 	siotypes "github.com/dell/goscaleio/types/v1"
 )
 
+// zhou: CSM replication
+
 const (
 	// KeyReplicationRemoteSystem represents key for replication remote system
 	KeyReplicationRemoteSystem = "remoteSystem"
