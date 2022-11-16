@@ -33,6 +33,8 @@ const (
 	ExistingGroupID = "existingSnapshotGroupID"
 )
 
+// zhou: PodMon
+
 func (s *service) ValidateVolumeHostConnectivity(ctx context.Context, req *podmon.ValidateVolumeHostConnectivityRequest) (*podmon.ValidateVolumeHostConnectivityResponse, error) {
 	Log.Infof("ValidateVolumeHostConnectivity called %+v", req)
 	rep := &podmon.ValidateVolumeHostConnectivityResponse{
@@ -116,6 +118,8 @@ func (s *service) ValidateVolumeHostConnectivity(ctx context.Context, req *podmo
 	Log.Infof("ValidateVolumeHostConnectivity reply %+v", rep)
 	return rep, nil
 }
+
+// zhou: README, VolumeGroupSnapshot,
 
 func (s *service) CreateVolumeGroupSnapshot(ctx context.Context, req *volumeGroupSnapshot.CreateVolumeGroupSnapshotRequest) (*volumeGroupSnapshot.CreateVolumeGroupSnapshotResponse, error) {
 	Log.Infof("CreateVolumeGroupSnapshot called with req: %v", req)
@@ -242,6 +246,8 @@ func validateCreateVGSreq(req *volumeGroupSnapshot.CreateVolumeGroupSnapshotRequ
 
 	return nil
 }
+
+// zhou: README,
 
 func (s *service) buildSnapshotDefs(req *volumeGroupSnapshot.CreateVolumeGroupSnapshotRequest, systemID string) ([]*siotypes.SnapshotDef, error) {
 	snapshotDefs := make([]*siotypes.SnapshotDef, 0)

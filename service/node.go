@@ -111,6 +111,8 @@ func (s *service) NodeUnstageVolume(
 	return &csi.NodeUnstageVolumeResponse{}, nil
 }
 
+// zhou: README, invoked by external-attacher
+
 func (s *service) NodePublishVolume(
 	ctx context.Context,
 	req *csi.NodePublishVolumeRequest) (
@@ -155,9 +157,12 @@ func (s *service) NodePublishVolume(
 		isNFS = true
 	}
 
+	// zhou: volume ID within PowerFlex
+
 	volID := getVolumeIDFromCsiVolumeID(csiVolID)
 	Log.Printf("[NodePublishVolume] volumeID: %s", volID)
 
+	// zhou: system ID of PowerFlex
 	systemID := s.getSystemIDFromCsiVolumeID(csiVolID)
 	Log.Printf("[NodePublishVolume] systemID: %s harvested from csiVolID: %s", systemID, csiVolID)
 	if systemID == "" {
@@ -168,6 +173,8 @@ func (s *service) NodePublishVolume(
 		return nil, status.Error(codes.InvalidArgument,
 			"systemID is not found in the request and there is no default system")
 	}
+
+	// zhou: need to contact this PowerFlex firstly if not.
 
 	Log.Printf("[NodePublishVolume] We are about to probe the system with systemID %s", systemID)
 	// Probe the system to make sure it is managed by driver
@@ -216,10 +223,14 @@ func (s *service) NodePublishVolume(
 		return &csi.NodePublishVolumeResponse{}, nil
 	}
 
+	// zhou:
+
 	sdcMappedVol, err := s.getSDCMappedVol(volID, systemID, publishGetMappedVolMaxRetry)
 	if err != nil {
 		return nil, status.Error(codes.InvalidArgument, err.Error())
 	}
+
+	// zhou:
 
 	if err := publishVolume(req, s.privDir, sdcMappedVol.SdcDevice, reqID); err != nil {
 		return nil, err
@@ -227,6 +238,8 @@ func (s *service) NodePublishVolume(
 
 	return &csi.NodePublishVolumeResponse{}, nil
 }
+
+// zhou: README, invoked by external-attacher
 
 func (s *service) NodeUnpublishVolume(
 	ctx context.Context,
@@ -388,6 +401,8 @@ func (s *service) NodeUnpublishVolume(
 	return &csi.NodeUnpublishVolumeResponse{}, nil
 }
 
+// zhou: README, check host local block devices ???
+
 // Get sdc mapped volume from the given volume ID/systemID
 func (s *service) getSDCMappedVol(volumeID string, systemID string, maxRetry int) (*goscaleio.SdcMappedVolume, error) {
 	// If not found immediately, give a little time for controller to
@@ -412,6 +427,8 @@ func (s *service) getSDCMappedVol(volumeID string, systemID string, maxRetry int
 	}
 	return sdcMappedVol, err
 }
+
+// zhou: README,
 
 // Get the volumes published to the SDC (given by SdcMappedVolume) and scan for requested vol id
 func getMappedVol(volID string, systemID string) (*goscaleio.SdcMappedVolume, error) {
@@ -450,6 +467,8 @@ func (s *service) getSystemName(ctx context.Context, systems []string) bool {
 	return true
 }
 
+// zhou: README, fetch info from /dev/scini.
+
 // nodeProbe fetchs the SDC GUID by drv_cfg and the systemIDs/names by getSystemName method.
 // It also makes sure private directory(privDir) is created
 func (s *service) nodeProbe(ctx context.Context) error {
@@ -458,6 +477,8 @@ func (s *service) nodeProbe(ctx context.Context) error {
 		return status.Error(codes.FailedPrecondition,
 			"scini kernel module not loaded")
 	}
+
+	// zhou: fetch GUID (Node ID) via "/dev/scini"
 
 	// fetch the SDC GUID
 	if s.opts.SdcGUID == "" {
@@ -472,6 +493,8 @@ func (s *service) nodeProbe(ctx context.Context) error {
 		Log.WithField("guid", s.opts.SdcGUID).Info("set SDC GUID")
 	}
 
+	// zhou: get a map of system id and corresponding SDC id via /dev/scini.
+
 	// fetch the systemIDs
 	var err error
 	if len(connectedSystemID) == 0 {
@@ -480,6 +503,8 @@ func (s *service) nodeProbe(ctx context.Context) error {
 			return status.Errorf(codes.FailedPrecondition, "%s", err.Error())
 		}
 	}
+
+	// zhou: specify the GUID naming rule
 
 	// rename SDC
 	/*
@@ -492,6 +517,8 @@ func (s *service) nodeProbe(ctx context.Context) error {
 			return err
 		}
 	}
+
+	// zhou: If PowerFlex specify guid, this feature must be enabled.
 
 	// support for pre-approved guid
 	if s.opts.IsApproveSDCEnabled {
@@ -514,6 +541,9 @@ func (s *service) nodeProbe(ctx context.Context) error {
 	return nil
 }
 
+// zhou: during CSI node plugin init, checking SDC approval if needed.
+//       restricted sdc mode == none/guid/hostip.
+
 func (s *service) approveSDC(opts Opts) error {
 	for _, systemID := range connectedSystemID {
 		system := s.systems[systemID]
@@ -527,6 +557,9 @@ func (s *service) approveSDC(opts Opts) error {
 		if err != nil {
 			return status.Errorf(codes.FailedPrecondition, "%s", err)
 		}
+
+		// zhou: if PowerFlex restricted SDC mode == GUID, and have not been approved,
+		//       approved it.
 
 		// fetch the restrictedSdcMode
 		if system.System.RestrictedSdcMode == "Guid" {
@@ -606,6 +639,8 @@ func (s *service) getSDCName(sdcGUID string, systemID string) error {
 	return nil
 }
 
+// zhou:
+
 func kmodLoaded(opts Opts) bool {
 	// opts.Lsmod is introduced solely for unit testing.
 	var out []byte
@@ -633,6 +668,8 @@ func kmodLoaded(opts Opts) bool {
 
 	return false
 }
+
+// zhou: README, get map of system id and corresponding SDC id via /dev/scini.
 
 func getSystemsKnownToSDC() ([]string, error) {
 	systems := make([]string, 0)
@@ -708,6 +745,8 @@ func (s *service) NodeGetCapabilities(
 	}, nil
 }
 
+// zhou: kubelet will invoke this function to complete Plugin registration.
+
 // NodeGetInfo returns Node information
 // NodeId is the identifier of the node and will match the SDC GUID
 // MaxVolumesPerNode (optional) is left as 0 which means unlimited
@@ -730,6 +769,9 @@ func (s *service) NodeGetInfo(
 			return nil, err
 		}
 	}
+
+	// zhou: SystemTopologySystemValue string = "csi-vxflexos.dellemc.com"
+	// "csi-vxflexos.dellemc.com/9427e836279ed40f: csi-vxflexos.dellemc.com"
 
 	// Create the topology keys
 	// csi-vxflexos.dellemc.com/<systemID>: <provisionerName>
@@ -780,6 +822,8 @@ func (s *service) NodeGetInfo(
 		MaxVolumesPerNode: maxVxflexosVolumesPerNode,
 	}, nil
 }
+
+// zhou: README,
 
 // NodeGetVolumeStats will check the status of a volume given its ID and path
 // if volume is healthy, stats on volume usage will be returned
@@ -921,6 +965,8 @@ func (s *service) NodeGetVolumeStats(ctx context.Context, req *csi.NodeGetVolume
 	}, nil
 }
 
+// zhou: README,
+
 func (s *service) NodeExpandVolume(ctx context.Context, req *csi.NodeExpandVolumeRequest) (*csi.NodeExpandVolumeResponse, error) {
 	var reqID string
 	var err error
@@ -1039,3 +1085,261 @@ func (s *service) NodeExpandVolume(ctx context.Context, req *csi.NodeExpandVolum
 func getNodelabels(ctx context.Context, s *service) (map[string]string, error) {
 	return s.GetNodeLabels(ctx)
 }
+
+/*
+apiVersion: v1
+kind: Pod
+metadata:
+  creationTimestamp: "2023-04-03T03:04:13Z"
+  generateName: csi-vxflexos-node-
+  labels:
+    app: csi-vxflexos-node
+    controller-revision-hash: 5fddbf6bcb
+    pod-template-generation: "1"
+  name: csi-vxflexos-node-fr99d
+  namespace: default
+  ownerReferences:
+  - apiVersion: apps/v1
+    blockOwnerDeletion: true
+    controller: true
+    kind: DaemonSet
+    name: csi-vxflexos-node
+    uid: d543d85f-198a-4b2c-af19-e62d5007dca1
+  resourceVersion: "903234"
+  uid: 82f9de71-9855-4da8-b43c-fa65a53f440c
+spec:
+  affinity:
+    nodeAffinity:
+      requiredDuringSchedulingIgnoredDuringExecution:
+        nodeSelectorTerms:
+        - matchFields:
+          - key: metadata.name
+            operator: In
+            values:
+            - node0
+  containers:
+  - args:
+    - --array-config=/vxflexos-config/config
+    - --driver-config-params=/vxflexos-config-params/driver-config-params.yaml
+    command:
+    - /csi-vxflexos.sh
+    env:
+    - name: CSI_ENDPOINT
+      value: unix:///var/lib/kubelet/plugins/vxflexos.emc.dell.com/csi_sock
+    - name: X_CSI_MODE
+      value: node
+    - name: X_CSI_PRIVATE_MOUNT_DIR
+      value: /var/lib/kubelet/plugins/vxflexos.emc.dell.com/disks
+    - name: X_CSI_ALLOW_RWO_MULTI_POD_ACCESS
+      value: "false"
+    - name: SSL_CERT_DIR
+      value: /certs
+    - name: X_CSI_HEALTH_MONITOR_ENABLED
+      value: "false"
+    image: registry.dell.io:8443/csi-vxflexos:v2.5.0
+    imagePullPolicy: IfNotPresent
+    name: driver
+    resources: {}
+    securityContext:
+      allowPrivilegeEscalation: true
+      capabilities:
+        add:
+        - SYS_ADMIN
+      privileged: true
+    terminationMessagePath: /dev/termination-log
+    terminationMessagePolicy: File
+    volumeMounts:
+    - mountPath: /var/lib/kubelet/plugins/vxflexos.emc.dell.com
+      name: driver-path
+    - mountPath: /var/lib/kubelet/plugins/kubernetes.io/csi/volumeDevices
+      mountPropagation: Bidirectional
+      name: volumedevices-path
+    - mountPath: /var/lib/kubelet/pods
+      mountPropagation: Bidirectional
+      name: pods-path
+    - mountPath: /dev
+      name: dev
+    - mountPath: /vxflexos-config
+      name: vxflexos-config
+    - mountPath: /vxflexos-config-params
+      name: vxflexos-config-params
+    - mountPath: /var/run/secrets/kubernetes.io/serviceaccount
+      name: kube-api-access-hzq66
+      readOnly: true
+  - args:
+    - --v=5
+    - --csi-address=$(ADDRESS)
+    - --kubelet-registration-path=/var/lib/kubelet/plugins/vxflexos.emc.dell.com/csi_sock
+    env:
+    - name: ADDRESS
+      value: /csi/csi_sock
+    - name: KUBE_NODE_NAME
+      valueFrom:
+        fieldRef:
+          apiVersion: v1
+          fieldPath: spec.nodeName
+    image: registry.dell.io:8443/csi-node-driver-registrar:v2.6.0
+    imagePullPolicy: IfNotPresent
+    name: registrar
+    resources: {}
+    terminationMessagePath: /dev/termination-log
+    terminationMessagePolicy: File
+    volumeMounts:
+    - mountPath: /registration
+      name: registration-dir
+    - mountPath: /csi
+      name: driver-path
+    - mountPath: /var/run/secrets/kubernetes.io/serviceaccount
+      name: kube-api-access-hzq66
+      readOnly: true
+  dnsPolicy: ClusterFirstWithHostNet
+  enableServiceLinks: true
+  hostNetwork: true
+  imagePullSecrets:
+  - name: csi-vxflexos-node-dockercfg-ws4gj
+  initContainers:
+  - env:
+    - name: NODENAME
+      valueFrom:
+        fieldRef:
+          apiVersion: v1
+          fieldPath: spec.nodeName
+    - name: MODE
+      value: config
+    - name: MDM
+      valueFrom:
+        secretKeyRef:
+          key: MDM
+          name: csi-vxflexos-config
+    - name: HOST_DRV_CFG_PATH
+      value: /opt/emc/scaleio/sdc/bin
+    - name: MODULE_SIGCHECK
+      value: "0"
+    image: registry.dell.io:8443/sdc:3.6.0.6
+    imagePullPolicy: IfNotPresent
+    name: sdc
+    resources: {}
+    securityContext:
+      privileged: true
+    terminationMessagePath: /dev/termination-log
+    terminationMessagePolicy: File
+    volumeMounts:
+    - mountPath: /dev
+      name: dev
+    - mountPath: /host-os-release
+      name: os-release
+    - mountPath: /storage
+      name: sdc-storage
+    - mountPath: /rules.d
+      name: udev-d
+    - mountPath: /host_drv_cfg_path
+      name: scaleio-path-opt
+    - mountPath: /config
+      name: sio-config
+    - mountPath: /var/run/secrets/kubernetes.io/serviceaccount
+      name: kube-api-access-hzq66
+      readOnly: true
+  nodeName: node0
+  preemptionPolicy: PreemptLowerPriority
+  priority: 0
+  restartPolicy: Always
+  schedulerName: default-scheduler
+  securityContext: {}
+  serviceAccount: csi-vxflexos-node
+  serviceAccountName: csi-vxflexos-node
+  terminationGracePeriodSeconds: 30
+  tolerations:
+  - effect: NoExecute
+    key: node.kubernetes.io/not-ready
+    operator: Exists
+  - effect: NoExecute
+    key: node.kubernetes.io/unreachable
+    operator: Exists
+  - effect: NoSchedule
+    key: node.kubernetes.io/disk-pressure
+    operator: Exists
+  - effect: NoSchedule
+    key: node.kubernetes.io/memory-pressure
+    operator: Exists
+  - effect: NoSchedule
+    key: node.kubernetes.io/pid-pressure
+    operator: Exists
+  - effect: NoSchedule
+    key: node.kubernetes.io/unschedulable
+    operator: Exists
+  - effect: NoSchedule
+    key: node.kubernetes.io/network-unavailable
+    operator: Exists
+  volumes:
+  - hostPath:
+      path: /var/lib/kubelet/plugins_registry/
+      type: DirectoryOrCreate
+    name: registration-dir
+  - hostPath:
+      path: /var/lib/kubelet/plugins/vxflexos.emc.dell.com
+      type: DirectoryOrCreate
+    name: driver-path
+  - hostPath:
+      path: /var/lib/kubelet/plugins/kubernetes.io/csi/volumeDevices
+      type: DirectoryOrCreate
+    name: volumedevices-path
+  - hostPath:
+      path: /var/lib/kubelet/pods
+      type: Directory
+    name: pods-path
+  - hostPath:
+      path: /dev
+      type: Directory
+    name: dev
+  - hostPath:
+      path: /opt/emc/scaleio/sdc/bin
+      type: DirectoryOrCreate
+    name: scaleio-path-opt
+  - hostPath:
+      path: /var/emc-scaleio
+      type: DirectoryOrCreate
+    name: sdc-storage
+  - hostPath:
+      path: /etc/udev/rules.d
+      type: Directory
+    name: udev-d
+  - hostPath:
+      path: /etc/os-release
+      type: File
+    name: os-release
+  - name: vxflexos-config
+    secret:
+      defaultMode: 420
+      secretName: csi-vxflexos-config
+  - hostPath:
+      path: /var/sio-config
+      type: DirectoryOrCreate
+    name: sio-config
+  - configMap:
+      defaultMode: 420
+      name: csi-vxflexos-config-params
+    name: vxflexos-config-params
+  - name: kube-api-access-hzq66
+    projected:
+      defaultMode: 420
+      sources:
+      - serviceAccountToken:
+          expirationSeconds: 3607
+          path: token
+      - configMap:
+          items:
+          - key: ca.crt
+            path: ca.crt
+          name: kube-root-ca.crt
+      - downwardAPI:
+          items:
+          - fieldRef:
+              apiVersion: v1
+              fieldPath: metadata.namespace
+            path: namespace
+      - configMap:
+          items:
+          - key: service-ca.crt
+            path: service-ca.crt
+          name: openshift-service-ca.crt
+*/

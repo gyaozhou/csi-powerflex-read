@@ -23,6 +23,8 @@ import (
 	"k8s.io/client-go/rest"
 )
 
+// zhou: kube client shared
+
 // Clientset - Interface to kubernetes
 var Clientset kubernetes.Interface
 
@@ -30,6 +32,8 @@ type leaderElection interface {
 	Run() error
 	WithNamespace(namespace string)
 }
+
+// zhou: if not specified in cli argument, get it in default order.
 
 // CreateKubeClientSet - Returns kubeclient set
 func CreateKubeClientSet() error {
@@ -45,6 +49,8 @@ func CreateKubeClientSet() error {
 	}
 	return nil
 }
+
+// zhou:
 
 // LeaderElection - Initializes Leader election
 func LeaderElection(clientset *kubernetes.Interface, lockName string, namespace string, runFunc func(ctx context.Context)) {
